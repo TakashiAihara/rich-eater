@@ -11,9 +11,10 @@ datasource db {
 }
 
 model FeedItem {
-  id          Int     @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   title       String
   link        String
+  url         String   @unique
   description String?
   pubDate     DateTime
 }

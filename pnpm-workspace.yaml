@@ -1,0 +1,4 @@
+packages:
+  - packages/crawler
+  - packages/db
+  - packages/web

@@ -1,44 +1,61 @@
+import { scheduleJob } from 'node-schedule';
 import Parser from 'rss-parser';
 import { PrismaClient } from '@prisma/client';
-import schedule from 'node-schedule';
 
-// Prismaクライアントを初期化
 const prisma = new PrismaClient();
-
-// RSSパーサーを初期化
 const parser = new Parser();
 
-// ポーリング間隔を1分に設定
-const interval = '*/1 * * * *';
+// フィードを保存する関数
+async function saveFeed(feed: Parser.Output<{}>): Promise<void> {
+	const { title, link, items, description, feedUrl, image, paginationLinks } = feed;
 
-// フィードのURLを設定
-const feedURL = 'http://blog.livedoor.jp/kinisoku/index.rdf';
+	for (const item of items) {
+		const { title, link } = item;
 
-// フィードをポーリングして、取得した記事をデータベースに保存する関数
-const pollFeed = async () => {
-	try {
-		const feed = await parser.parseURL(feedURL);
-
-		// 記事を保存するためのオブジェクトの配列を初期化
-		const feedItems = [];
-
-		// フィードから取得した記事を、Prismaのモデルにマッピング
-		feed.items.forEach((item) => {
-			feedItems.push({
-				title: item.title,
-				link: item.link,
-				description: item.content,
-				pubDate: new Date(item.isoDate),
-			});
+		// 既に同じURLを持つレコードが存在するかどうかチェックする
+		const existingRecord = await prisma.feedItem.findUnique({
+			where: {
+				url: link,
+			},
 		});
 
-		// 記事をデータベースに保存
-		await prisma.feedItem.createMany({ data: feedItems });
-		console.log(`Saved ${feedItems.length} items from ${feedURL}`);
-	} catch (err) {
-		console.error(err);
+		// レコードが存在しない場合のみ、新しいレコードを挿入する
+		if (!existingRecord) {
+			await prisma.feedItem.create({
+				data: {
+					title: title || "",
+					url: link || "",
+					link: feed.link || "",
+					pubDate: item.pubDate || "",
+				},
+			});
+		}
 	}
-};
 
-// スケジュールを設定
-schedule.scheduleJob(interval, pollFeed);
+	console.log(`Saved ${feed.items.length} items from ${title}`);
+}
+
+// 定期的にフィードを解析するジョブをスケジュールする関数
+function scheduleFeedCrawler(url: string, interval: number): void {
+	scheduleJob(`*/${interval} * * * *`, async function () {
+		try {
+			const feed = await parser.parseURL(url);
+			await saveFeed(feed);
+		} catch (error) {
+			console.error(`Failed to parse feed from ${url}: ${error}`);
+		}
+	});
+}
+
+// メインの処理
+async function main(): Promise<void> {
+	await prisma.$connect();
+
+	// フィードを定期的に解析するジョブをスケジュールする
+	scheduleFeedCrawler('https://www.elog-ch.net/feed', 5); // 5分ごとにフィードを解析する
+
+	// プロセスが終了するまで待機する
+	process.stdin.resume();
+}
+
+main().catch((error) => console.error(error));
